@@ -1,4 +1,23 @@
 # q_learning_project
 **Team Members: Carlos Azpurua, Nic Gard**
 ## Implementation Plan:
+**Q-Learning Algorithm**
++ *Executing the Q-learning algorithm*: The Q-learning algorithm can be implemented largely like how it was implemented in class with the 5 Room Building example, except using map coordinates instead of room numbers, and the actions of picking up/dropping the dumbbell are included in potential actions. Testing this may lead to a better solution, as whether or not this approach works with a robot on a larger state space may prove impractical.
++ *Determining when the Q-matrix has converged*: The Q-matrix will be determined to have converged when there are minimal differences between each Q (instead of an absolute lack of change). The exact threshold for what qualifies as “minimum change” is to be determined while testing.
++ *Once the Q-matrix has converged, how to determine which actions the robot should take to maximize expected reward*: Coordinates closer to the correct numbered block should yield a higher reward, and picking up the dumbbell and then dropping it off afterwards should yield a higher “goal” reward which can’t be reached from traversal alone. Testing this should be straightforward, as the exact reward values of the coordinate space can be tweaked to give the best performing operation.
+
+**Robot Perception**
++ *Determining the identities and locations of the three colored dumbbells*: To find a particular dumbbell, we will rotate the robot in place until the average position of the pixel color of the dumbbell is horizontally centered on the camera. At this point, the robot will be facing the dumbbell, and so we can get the distance of the dumbbell from the robot by checking the lidar reading at angle 0. To test this, we will place dumbbells in various positions, and check whether the robot can correctly face and determine the distance to the nearest dumbell.
++ *Determining the identities and locations of the three numbered blocks*: Upon initialization of the robot, we will rotate the robot 180 degrees to face the blocks, and then run the keras digit recognition algorithm. The algorithm will recognize the faces of the blocks on the camera (hopefully all of them), and from their locations on screen we can determine their order, and from then on we can use lidar and keep track of the orientation of the robot to reach a block. To test this we will check that the robot camera can actually view all the blocks at once (or at least 2), and run trials where we mix around the blocks to ensure that the robot is correctly identifying the blocks.
+
+**Robot Manipulation & Movement**
++ *Picking up and putting down the dumbbells with the OpenMANIPULATOR arm*: To pick up the dumbbell once it is within range (i.e. immediately in front of the robot), the robot arm will execute a written “pick up dumbbell” action, which should pick up the dumbbell when it is the correct distance away from the robot. Likewise, a “drop dumbbell” action will also be written to release the dumbbell when in the correct position. To test this, we can set the robot in random positions around a dumbbell until it navigates to it and successfully picks it up, and also to task the robot with navigating to a predetermined location to drop the dumbbell. The testing of this task will determine the fine-tuning required to make these actions successful.
++ *Navigating to the appropriate locations to pick up and put down the dumbbells*: After the robot determines the location of the dumbbells, it can navigate to them to pick them up, as there should never be any obstacles between the robot and the dumbbell. Likewise, the robot can determine the location of the corresponding numbered block (where the identity of each block is determined as soon as possible, and the location of every block can be read on the fly), and navigate directly towards it, as there should be no obstacles between the robot and the block. Testing whether the robot can accomplish this should be straightforward, assuming that there are no obstacles the robot might encounter.
+
 ### Timeline:
++ **Sunday, May 2nd:** Robot can determine the identity and location of the colored dumbbells.
++ **Monday, May 3rd:** Robot can determine the identity and location of the numbered blocks.
++ **Tuesday, May 4th:** Robot can navigate to dumbbells and numbered blocks without Q-learning.
++ **Thursday, May 6th:** The Q-matrix can be trained.
++ **Saturday, May 8th:** The robot can execute a series of actions from the Q-matrix.
++ **Monday, May 10th:** The robot successfully moves the dumbbells to the corresponding numbered block.
