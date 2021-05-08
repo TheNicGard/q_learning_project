@@ -60,26 +60,27 @@ class digit_recognition(object):
             self.seen_first_pose = True
 
     def scan_callback(self, data):
-        if self.initialized:
-            # only search for block positions once at start
-            if not self.seen_first_scan:
-                # variable that tells us whether the previous angle detected something
-                contiguous_object = False
-                # check 180 degrees behind robot for blocks
-                for angle in range(90, 271):
-                    if data.ranges[angle] <= data.range_max:
-                        # object detected
-                        if not contiguous_object:
-                            first_angle = angle
-                            contiguous_object = True
-                    else:
-                        if contiguous_object:
-                            # we are at the first angle at which an object is no longer detected
-                            middle_angle = ((first_angle + angle) // 2)
-                            middle_angle_rad = ((first_angle + angle) // 2) * np.pi/180
-                            self.block_polar_coordinates.append((data.ranges[middle_angle], middle_angle_rad))
-                            contiguous_object = False
-                self.seen_first_scan = True
+        # only search for block positions once at start
+        if self.initialized and not self.seen_first_scan:
+            # variable that tells us whether the previous angle detected something
+            contiguous_object = False
+
+            for angle in range(360):
+                if data.ranges[angle] <= data.range_max:
+                    # object detected
+                    if not contiguous_object:
+                        first_angle = angle
+                        contiguous_object = True
+                elif contiguous_object:
+                    # we are at the first angle at which an object is no longer detected
+                    middle_angle = ((first_angle + angle) // 2)
+                    middle_angle_rad = ((first_angle + angle) // 2) * np.pi/180
+                    self.block_polar_coordinates.append((data.ranges[middle_angle], middle_angle_rad))
+                    contiguous_object = False
+            self.seen_first_scan = True
+            print("Block polar coordinates:")
+            for i in self.block_polar_coordinates:
+                print(i)
 
     def image_callback(self, data):
         if self.initialized:
@@ -90,29 +91,29 @@ class digit_recognition(object):
                 self.image_width = data.width
                 self.capture_image = False
     
-    # turn the robot CCW the given an angle in radians
-    def turn_clockwise(self, angle):
-
+    # turn the robot towards the given an angle, given in radians
+    def turn_towards_target(self, angle):
         #wait for first pose
         while (not self.seen_first_pose):
             time.sleep(1)
+            
         current_yaw = get_yaw_from_pose(self.current_pose.pose.pose)
 
         # convert angle to radian value in [-pi, pi]
         angle = math.remainder(angle , 2*np.pi)
-        destination_yaw = current_yaw + angle 
+        destination_yaw = current_yaw + angle
+        if destination_yaw > np.pi:
+            destination_yaw = -np.pi + (destination_yaw - np.pi)
 
         r = rospy.Rate(60)
         # turn until we face within 1 degree of destination angle
-        while abs(get_yaw_from_pose(self.current_pose.pose.pose) - destination_yaw) > 0.0175:
-            turn_msg = Twist()
-            abs(get_yaw_from_pose(self.current_pose.pose.pose) - destination_yaw) 
+        while abs(get_yaw_from_pose(self.current_pose.pose.pose) - destination_yaw) > (np.pi / 180):
             # turn pi/16 rad/sec
-            turn_vel = np.sign(destination_yaw - get_yaw_from_pose(self.current_pose.pose.pose)) * 0.196
+            turn_msg = Twist()
+            turn_vel = np.sign(destination_yaw - get_yaw_from_pose(self.current_pose.pose.pose)) * (np.pi / 16)
             turn_msg.angular = Vector3(0, 0, turn_vel)
             self.movement_pub.publish(turn_msg)
             r.sleep()
-        
         # Halt
         self.movement_pub.publish(Twist())
     
@@ -134,26 +135,34 @@ class digit_recognition(object):
         img = self.bridge.imgmsg_to_cv2(self.image_capture, desired_encoding='bgr8')
         
         prediction_groups = self.pipeline.recognize([img])
+
+        
         print("Num Predictions:", len(prediction_groups[0]))
 
-        # calculate distance to center of image for each prediction
-        center_list = []
-        for (word, box) in prediction_groups[0]:
-            cx = (box[0][0] + box[1][0] + box[2][0] + box[3][0])/4
-            cy = (box[0][1] + box[1][1] + box[2][1] + box[3][1])/4
-            center_distance_squared = (cx - self.image_width/2) ** 2 + (cy - self.image_height/2) ** 2
-            center_list.append((word, center_distance_squared))
+        if len(prediction_groups[0]) == 0:
+            print("No predictions were made!")
+            return
+        else:
+            # calculate distance to center of image for each prediction
+            center_list = []
+            for (word, box) in prediction_groups[0]:
+                cx = (box[0][0] + box[1][0] + box[2][0] + box[3][0])/4
+                cy = (box[0][1] + box[1][1] + box[2][1] + box[3][1])/4
+                center_distance_squared = (cx - self.image_width/2) ** 2 + (cy - self.image_height/2) ** 2
+                center_list.append((word, center_distance_squared))
 
-        # initialize minimum observation as first in list
-        closest_center_index = 0
-        # get index of best centered prediction
-        for i in range(len(center_list)):
-            if center_list[i][1] < center_list[closest_center_index][1]:
-                closest_center_index = i
-        print(center_list)
-        print(center_list[closest_center_index][1])
-        # add prediction to the label dictionary
-        self.block_label_dictionary[center_list[closest_center_index][0]] = self.block_polar_coordinates[block_coord_index]
+            # initialize minimum observation as first in list
+            closest_center_index = 0
+        
+            # get index of best centered prediction
+            for i in range(len(center_list)):
+                if center_list[i][1] < center_list[closest_center_index][1]:
+                    closest_center_index = i
+            print(center_list)
+            print(center_list[closest_center_index][1])
+        
+            # add prediction to the label dictionary
+            self.block_label_dictionary[center_list[closest_center_index][0]] = self.block_polar_coordinates[block_coord_index]
 
 
     # Executes the process of searching for the blocks, turning the robot to 
@@ -162,25 +171,14 @@ class digit_recognition(object):
         # wait for first scan to come in
         while not self.seen_first_scan:
             time.sleep(1)
-        if len(self.block_polar_coordinates) != 3:
-            print("Detected:", len(self.block_polar_coordinates), " != 3 blocks, exiting")
-            exit()
-        # turn to face the first block
-        self.turn_clockwise(self.block_polar_coordinates[0][1])
-        # search for digits
-        self.search_view_for_digits(0)
-        # turn to face the second block
-        self.turn_clockwise(self.block_polar_coordinates[1][1] - get_yaw_from_pose(self.current_pose.pose.pose))
-        # search for digits
-        self.search_view_for_digits(1)
-        # update dictionary (last block must have missing label)
-        if 1 not in self.block_label_dictionary:
-            self.block_label_dictionary['1'] = self.block_polar_coordinates[2]
-        elif 2 not in self.block_label_dictionary:
-            self.block_label_dictionary['2'] = self.block_polar_coordinates[2]
-        else:
-            self.block_label_dictionary['3'] = self.block_polar_coordinates[2]
+        if len(self.block_polar_coordinates) < 3:
+            raise Exception("Detected: " + str(len(self.block_polar_coordinates)) + " < 3 blocks, exiting")
 
+        for i in range(0, len(self.block_polar_coordinates)):
+            # turn towards the target
+            self.turn_towards_target(self.block_polar_coordinates[i][1] - get_yaw_from_pose(self.current_pose.pose.pose))
+            # search for digits within the screenshot
+            self.search_view_for_digits(i)
 
     # should be called after run_digit_search
     # returns polar coordinates relative to the starting pose of the robot of the blocks
