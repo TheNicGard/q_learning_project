@@ -3,7 +3,7 @@
 import rospy
 import numpy as np
 import os
-import csv, time
+import csv, time, copy
 from q_learning_project.msg import QMatrixRow, QMatrix, QLearningReward, RobotMoveDBToBlock
 
 # Path of directory on where this file is located
@@ -48,7 +48,7 @@ class QLearning(object):
 
         # set learning rate and discount factor
         self.learning_rate = 1
-        self.discount_factor = 0.5
+        self.discount_factor = 0.1
 
         self.q_matrix_pub= rospy.Publisher("/q_learning/q_matrix", QMatrix, queue_size=10)
         self.action_pub = rospy.Publisher("/q_learning/robot_action", RobotMoveDBToBlock, queue_size=10)
@@ -59,7 +59,7 @@ class QLearning(object):
 
     # saves q_matrix to q_matrix.csv
     def save_q_matrix(self):
-        with open(os.path.dirname(__file__)+ "q_matrix.csv", 'w') as csvfile:
+        with open(os.path.dirname(__file__) + "/q_matrix.csv", 'w') as csvfile:
             q_matrix_writer = csv.writer(csvfile)
             for row_of_states in self.q_matrix:
                 csv_row = []
@@ -72,7 +72,11 @@ class QLearning(object):
     # loads q_matrix from csv, not sure where we need this but
     # we will need it somewhere
     def load_q_matrix(self):
-        pass
+        with open(os.path.dirname(__file__)+ "/q_matrix.csv", 'r') as csvfile:
+            q_matrix_writer = csv.reader(csvfile)
+            self.q_matrix = []
+            for row in q_matrix_writer:
+                self.q_matrix.append(list(map(lambda x : int(x), row)))
 
 
     def reward_call_back(self, data):
@@ -89,7 +93,7 @@ class QLearning(object):
 
         current_state_num = 0
         self.reward_update = 0
-        q_matrix_difference = 10
+        q_matrix_difference = 100
         iteration = 0
         while q_matrix_difference > 10:
             # training process
@@ -106,10 +110,8 @@ class QLearning(object):
                 chosen_action_num = int(action_state_pair[0])
                 action_dict = self.actions[chosen_action_num]
                 self.action_pub.publish(RobotMoveDBToBlock(action_dict['dumbbell'], action_dict['block']))
-
                 # wait until we get reward and update accordingly
                 while self.reward_update == 0:
-                    # self.action_pub.publish(RobotMoveDBToBlock(action_dict['dumbbell'], action_dict['block']))
                     time.sleep(1)
                 # reset check for reward callback
                 self.reward_update = 0
@@ -133,12 +135,14 @@ class QLearning(object):
                 current_state_num = next_state_num
                 
                 iteration += 1
+                print("Training iteration:", iteration)
                 if (iteration % (len(self.states) * len(self.actions))) == 0:
                     q_matrix_difference = 0
                     for s_index, state in enumerate(self.q_matrix):
                         for a_index, value in enumerate(state):
                             q_matrix_difference += abs(value - self.last_checked_q_matrix[s_index][a_index])
-                    self.last_checked_q_matrix = self.q_matrix
+                    self.last_checked_q_matrix = copy.deepcopy(self.q_matrix)
+                    print("New q_matrix_difference:", q_matrix_difference)
             else: # no actions left
                 current_state_num = 0
 
@@ -146,5 +150,5 @@ class QLearning(object):
 
 if __name__ == "__main__":
     node = QLearning()
-
     node.train_q_matrix()
+    node.save_q_matrix()
