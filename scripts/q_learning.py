@@ -46,14 +46,17 @@ class QLearning(object):
         self.states = np.loadtxt(path_prefix + "states.txt")
         self.states = list(map(lambda x: list(map(lambda y: int(y), x)), self.states))
 
+        self.q_matrix = None
+        self.reward_update = 0
+
         # set learning rate and discount factor
         self.learning_rate = 1
-        self.discount_factor = 0.1
+        self.discount_factor = 0.5
 
         self.q_matrix_pub= rospy.Publisher("/q_learning/q_matrix", QMatrix, queue_size=10)
         self.action_pub = rospy.Publisher("/q_learning/robot_action", RobotMoveDBToBlock, queue_size=10)
         self.reward_sub = rospy.Subscriber("/q_learning/reward", QLearningReward, self.reward_call_back)
-        #wait for publishers and subscribers to initialize
+        # wait for publishers and subscribers to initialize
         time.sleep(1)
 
 
@@ -77,6 +80,45 @@ class QLearning(object):
             self.q_matrix = []
             for row in q_matrix_writer:
                 self.q_matrix.append(list(map(lambda x : int(x), row)))
+
+
+    # publish commands and await rewards according to the values in
+    # self.q_matrix, or loads the q_matrix from the csv
+    def execute_according_to_q_matrix(self, q_location:str='self'):
+        if q_location == "csv":
+            self.load_q_matrix()
+        if self.q_matrix is not None:
+            current_state_num = 0
+            while not rospy.is_shutdown():
+                # get allowed actions
+                allowed_actions = []
+                for state in range(len(self.states)):
+                    action_num = self.action_matrix[current_state_num][state]
+                    if action_num >= 0:
+                        allowed_actions.append((int(action_num), int(state)))
+                # pick and publish best action, update state
+                if len(allowed_actions) > 0:
+                    best_q_val = self.q_matrix[current_state_num][allowed_actions[0][0]]
+                    best_action = allowed_actions[0][0]
+                    next_state_num = allowed_actions[0][1]
+                    for (action_num, next_state) in allowed_actions:
+                        if self.q_matrix[current_state_num][action_num] > best_q_val:
+                            best_q_val = self.q_matrix[current_state_num][action_num]
+                            best_action = action_num
+                            next_state_num = next_state
+                    action_dict = self.actions[best_action]
+                    self.action_pub.publish(RobotMoveDBToBlock(action_dict['dumbbell'], action_dict['block']))
+                    current_state_num = next_state_num
+                    # wait until we get reward to publish proceed
+                    while self.reward_update == 0:
+                        time.sleep(1)
+                    # reset check for reward callback
+                    self.reward_update = 0
+                else:
+                    # if no allowed actions, wait for reset
+                    current_state_num = 0
+        else:
+            raise Exception("'execute_according_to_q_matrix' could not find q_matrix")
 
 
     def reward_call_back(self, data):
@@ -104,8 +146,7 @@ class QLearning(object):
                 action_num = self.action_matrix[current_state_num][state]
                 if action_num >= 0:
                     allowed_actions.append((action_num, state))
-
-            if len(allowed_actions)> 0:
+            if len(allowed_actions) > 0:
                 action_state_pair = allowed_actions[int(np.random.randint(0, len(allowed_actions)))]
                 chosen_action_num = int(action_state_pair[0])
                 action_dict = self.actions[chosen_action_num]
@@ -121,7 +162,7 @@ class QLearning(object):
                 for action_q_value in self.q_matrix[next_state_num]:
                     if action_q_value >= best_q_value:
                         best_q_value = action_q_value
-                q_matrix_adjustment = self.reward + self.discount_factor * (best_q_value - self.q_matrix[current_state_num][chosen_action_num])
+                q_matrix_adjustment = self.reward + (self.discount_factor * best_q_value) - self.q_matrix[current_state_num][chosen_action_num]
                 self.q_matrix[current_state_num][chosen_action_num] += int(self.learning_rate * q_matrix_adjustment)
                 
                 # publish new q_matrix
@@ -152,3 +193,4 @@ if __name__ == "__main__":
     node = QLearning()
     node.train_q_matrix()
     node.save_q_matrix()
+    print("QMatrix Converged and Saved to q_matrix.csv")
