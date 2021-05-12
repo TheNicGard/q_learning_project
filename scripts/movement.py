@@ -22,34 +22,53 @@ class Movement(object):
         # openmanipulator gripper
         self.move_group_gripper = moveit_commander.MoveGroupCommander("gripper")
 
+        
     def move_to_ready(self):
         # move the arm
-        """
-        attempt using task space
-        """
-        pose_goal = Pose()
-        pose_goal.orientation.w = 0.0
-        pose_goal.position.x = 0.28
-        pose_goal.position.y = 0.0
-        pose_goal.position.z = 0.19
-        # self.move_group_arm.set_pose_target(pose_goal)
-        # self.move_group_arm.go(wait=True)
-        # self.move_group_arm.stop()
-
-
-        """
-        attempt using joint space
-        """
-        arm_joint_goal = [0.0, 0.555, 0.9, -0.392]
+        arm_joint_goal = [0.0, 0.526, -0.142, -0.070]
         self.move_group_arm.go(arm_joint_goal, wait=True)
+        self.move_group_arm.stop()
         
         # move the gripper
-        gripper_joint_goal = [0.05, 0.05]
-        # self.move_group_gripper.go(gripper_joint_goal, wait=True)
-        # self.move_group_gripper.stop()
+        gripper_joint_goal = [0.01, 0.01]
+        self.move_group_gripper.go(gripper_joint_goal, wait=True)
+        self.move_group_gripper.stop()
+
+        
+    def move_to_grabbed(self):
+        # move the gripper
+        gripper_joint_goal = [-0.01, -0.01]
+        self.move_group_gripper.go(gripper_joint_goal, wait=True)
+        self.move_group_gripper.stop()
+        
+        # move the arm
+        arm_joint_goal = [0, -1.08, 0.075, 0.035]
+        self.move_group_arm.go(arm_joint_goal, wait=True)
+        self.move_group_arm.stop()
+        
+
+    def move_to_release(self):
+        # move the arm
+        arm_joint_goal = [0, -0.35, -0.15, 0.5]
+        self.move_group_arm.go(arm_joint_goal, wait=True)
+        self.move_group_arm.stop()
+        
+        # move the gripper
+        gripper_joint_goal = [0.01, 0.01]
+        self.move_group_gripper.go(gripper_joint_goal, wait=True)
+        self.move_group_gripper.stop()
+
+        
+    def run(self):
+        mvmt.move_to_ready()
+        rospy.sleep(2)
+        mvmt.move_to_grabbed()
+        rospy.sleep(2)
+        mvmt.move_to_release()
+        rospy.spin()
 
 # Some Code for debugging
 if __name__=="__main__":
     mvmt = Movement()
-    mvmt.move_to_ready()
+    mvmt.run()
 
