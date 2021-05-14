@@ -5,11 +5,11 @@ import object_recognition
 import math
 import moveit_commander
 import numpy as np
-import rospy
+import rospy, cv2, cv_bridge
 
 from geometry_msgs.msg import Point, Pose, Twist, Vector3
 from nav_msgs.msg import Odometry
-from sensor_msgs.msg import LaserScan
+from sensor_msgs.msg import Image, LaserScan
 from tf.transformations import quaternion_from_euler, euler_from_quaternion
 
 """
@@ -29,11 +29,32 @@ class Movement(object):
     def __init__(self):
         # rospy.init_node('movement')
         # seems to have a problem with also initializing object_recognition?
-
+        self.initialized = False
+        self.target_driving_towards = None
         self.movement_pub = rospy.Publisher('/cmd_vel', Twist, queue_size=10)
         self.lidar_sub = rospy.Subscriber("/scan", LaserScan, self.get_scan)
         self.odom_sub = rospy.Subscriber('/odom', Odometry, self.odom_callback)
         self.action_sub = rospy.Subscriber('/q_learning/robot_action', Odometry, self.action_callback)
+        self.image_sub = rospy.Subscriber('camera/rgb/image_raw', Image, self.image_callback)
+
+        # set up ROS / cv bridge
+        self.bridge = cv_bridge.CvBridge()
+
+        self.seen_first_image = False
+
+        """
+        The upper and lower bounds for the BGR values for the color detection (i.e.
+        what is considered blue, green, and red by the robot).
+        """
+        self.blue_bounds = (np.array([100, 0, 0], dtype = "uint8"), np.array([255, 50, 50], dtype = "uint8"))
+        self.green_bounds = (np.array([0, 100, 0], dtype = "uint8"), np.array([50, 255, 50], dtype = "uint8"))
+        self.red_bounds = (np.array([0, 0, 100], dtype = "uint8"), np.array([50, 50, 255], dtype = "uint8"))
+
+        """
+        what percentage of the horizontal FOV the robot uses to determine the color
+        in front of it
+        """
+        self.horizontal_field_percent = 0.25
         
         # the interface to the group of joints making up the turtlebot3
         # openmanipulator arm
@@ -57,6 +78,8 @@ class Movement(object):
 
         # a dict to store the (x, y) positions of blocks and objects
         self.object_positions = {}
+        
+        self.driving_angular_velocity = 0
 
         self.initialized = True
 
@@ -79,19 +102,72 @@ class Movement(object):
             
         # drive towards target using LiDAR
         if self.driving:
+            drive_msg = Twist()
             if front_avg > prox_hi:
-                drive_msg = Twist()
                 drive_msg.linear = Vector3(0.1, 0, 0)
-                self.movement_pub.publish(drive_msg)
+                if self.target_driving_towards in self.color_turn_dict:
+                    print("adjusting drive to", self.target_driving_towards, " by", 0.001*self.color_turn_dict[self.target_driving_towards])
+                    drive_msg.angular = Vector3(0, 0, 0.001*self.color_turn_dict[self.target_driving_towards])
             elif front_avg < prox_lo:
-                drive_msg = Twist()
                 drive_msg.linear = Vector3(-0.1, 0, 0)
-                self.movement_pub.publish(drive_msg)
+                if self.target_driving_towards in self.color_turn_dict:
+                    print("adjusting drive to", self.target_driving_towards, " by", 0.001*self.color_turn_dict[self.target_driving_towards])
+                    drive_msg.angular = Vector3(0, 0, 0.001*self.color_turn_dict[self.target_driving_towards])
             else:
-                self.movement_pub.publish(Twist())
                 self.driving = False
+            self.movement_pub.publish(drive_msg)
+
+    
+    def image_callback(self, data):
+
+        if self.initialized:
+            if (not self.seen_first_image):
+                # we have now seen the first image
+                self.seen_first_image = True
+            # take the ROS message with the image and turn it into a format cv2 can use
+            img = self.bridge.imgmsg_to_cv2(data, desired_encoding='bgr8')
+            blue_mask = cv2.inRange(img, self.blue_bounds[0], self.blue_bounds[1])
+            green_mask = cv2.inRange(img, self.green_bounds[0], self.green_bounds[1])
+            red_mask = cv2.inRange(img, self.red_bounds[0], self.red_bounds[1])
+
+            Mred = cv2.moments(red_mask)
+            Mgreen = cv2.moments(green_mask)
+            Mblue = cv2.moments(blue_mask)
+            h, w, d = img.shape
+            # direction to turn for a given color
+            self.color_turn_dict = {}
+            # green center
+            if Mgreen['m00'] > 0:
+                cx = int(Mgreen['m10']/Mgreen['m00'])
+                cy = int(Mgreen['m01']/Mgreen['m00'])
+                # a red circle is visualized in the debugging window to indicate
+                # the center point of the green pixels.
+                cv2.circle(img, (cx, cy), 20, (0,0,255), -1)
+                self.color_turn_dict["green"] = (w/2 - cx)
+            else:
+                self.color_turn_dict["green"] = 0
+            # red center
+            if Mred['m00'] > 0:
+                cx = int(Mred['m10']/Mred['m00'])
+                cy = int(Mred['m01']/Mred['m00'])
+                #cv2.circle(img, (cx, cy), 20, (0,0,255), -1)
+                self.color_turn_dict["red"] = (w/2 - cx)
+            else:
+                self.color_turn_dict["red"] = 0
+            # blue center
+            if Mblue['m00'] > 0:
+                cx = int(Mblue['m10']/Mblue['m00'])
+                cy = int(Mblue['m01']/Mblue['m00'])
+                #cv2.circle(img, (cx, cy), 20, (0,0,255), -1)
+                self.color_turn_dict["blue"] = (w/2 - cx)
+            else:
+                self.color_turn_dict["blue"] = 0
+            # show the debugging window
+            cv2.imshow("window", img)
+            cv2.waitKey(3)
 
 
+    
     def action_callback(self, data):
         dumbbell = data.robot_db
         block = data.block_id
@@ -101,13 +177,14 @@ class Movement(object):
 
 
     def temp_callback(self):
-        actions = [("green", "3"), ("red", "1"), ("blue", "2")]
+        actions = [("green", "1"), ("red", "3"), ("blue", "2")]
 
 
         for (dumbbell, block) in actions:
             self.orient_towards_target(dumbbell)
             self.move_to_ready()
             self.driving = True
+            self.target_driving_towards = dumbbell
             while self.driving:
                 pass
         
@@ -217,7 +294,6 @@ class Movement(object):
 # Some Code for debugging
 if __name__=="__main__":
     mvmt = Movement()
-    
     print("Initializing Object Recognition")
     obj_rec = object_recognition.ObjectRecognition()
     print("Done Initializing, Running object search")
@@ -240,3 +316,4 @@ if __name__=="__main__":
     print(a)
 
     mvmt.run()
+    rospy.spin()
