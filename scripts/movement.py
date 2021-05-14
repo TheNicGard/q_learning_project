@@ -28,6 +28,7 @@ def get_yaw_from_pose(p):
 class Movement(object):
     def __init__(self):
         # rospy.init_node('movement')
+        # seems to have a problem with also initializing object_recognition?
 
         self.movement_pub = rospy.Publisher('/cmd_vel', Twist, queue_size=10)
         self.lidar_sub = rospy.Subscriber("/scan", LaserScan, self.get_scan)
@@ -42,12 +43,17 @@ class Movement(object):
         # openmanipulator gripper
         self.move_group_gripper = moveit_commander.MoveGroupCommander("gripper")
 
-        self.ready = False
-        self.grabbed = False
+        self.scan_complete = False
+        self.driving = False
+        self.on_way_to_block = False
+
+        self.ranges = []
 
         # the farthest and closest distance a robot can be to pick up an object
-        self.proximity_high = 0.23
-        self.proximity_low = 0.19
+        self.db_proximity_high = 0.23
+        self.db_proximity_low = 0.19
+        self.block_proximity_high = 0.55
+        self.block_proximity_low = 0.5
 
         # a dict to store the (x, y) positions of blocks and objects
         self.object_positions = {}
@@ -60,26 +66,31 @@ class Movement(object):
         
     def get_scan(self, data):
         # get the 5 degrees directly in front of the robot
-        front_scans = [data.ranges[0], data.ranges[1], data.ranges[2], data.ranges[358], data.ranges[359]]
+        front_scans = data.ranges[0:3] + data.ranges[358:360]
         front_avg = sum(front_scans) / len(front_scans)
-        a = "{:.2f}, {:.2f}, {:.2f}".format(self.current_pose.pose.pose.position.x, self.current_pose.pose.pose.position.y, get_yaw_from_pose(self.current_pose.pose.pose))
-        # print(a)
 
-        if self.ready:
-            if self.grabbed:
-                self.movement_pub.publish(Twist())
-            elif front_avg > self.proximity_high:
+        # the proximity required changes depending on if the robot is travelling
+        # towards a dumbbell or a block
+        prox_hi, prox_lo = 0, 0
+        if self.on_way_to_block:
+            prox_hi, prox_lo = self.block_proximity_high, self.block_proximity_low
+        else:
+            prox_hi, prox_lo = self.db_proximity_high, self.db_proximity_low
+            
+        # drive towards target using LiDAR
+        if self.driving:
+            if front_avg > prox_hi:
                 drive_msg = Twist()
                 drive_msg.linear = Vector3(0.1, 0, 0)
                 self.movement_pub.publish(drive_msg)
-            elif front_avg < self.proximity_low:
+            elif front_avg < prox_lo:
                 drive_msg = Twist()
                 drive_msg.linear = Vector3(-0.1, 0, 0)
                 self.movement_pub.publish(drive_msg)
-            elif self.grabbed == False:
-                self.grabbed = True
+            else:
                 self.movement_pub.publish(Twist())
-                self.move_to_grabbed()
+                self.driving = False
+
 
     def action_callback(self, data):
         dumbbell = data.robot_db
@@ -87,15 +98,39 @@ class Movement(object):
 
         # current_yaw = get_yaw_from_pose(self.current_pose.pose.pose)
         # current_x = get_yaw_from_pose(self.current_pose.pose.pose)
+
+
+    def temp_callback(self):
+        actions = [("green", "3"), ("red", "1"), ("blue", "2")]
+
+
+        for (dumbbell, block) in actions:
+            self.orient_towards_target(dumbbell)
+            self.move_to_ready()
+            self.driving = True
+            while self.driving:
+                pass
+        
+            self.move_to_grabbed()
+            self.orient_towards_target(block)
+            self.on_way_to_block = True
+            self.driving = True
+            while self.driving:
+                pass
+            self.on_way_to_block = False
+            
+            self.move_to_release()
                 
                 
     def move_arm(self, goal):
         self.move_group_arm.go(goal, wait=True)
         self.move_group_arm.stop()
 
+        
     def move_gripper(self, goal):
         self.move_group_gripper.go(goal, wait=True)
         self.move_group_gripper.stop()
+
                 
     def move_to_ready(self):
         self.move_arm([0.0, 0.55, 0.3, -0.85])
@@ -103,8 +138,6 @@ class Movement(object):
 
         print("Arm ready to grab!")
         rospy.sleep(2)
-        self.orient_towards_target("r")
-        self.ready = True
 
         
     def move_to_grabbed(self):
@@ -112,22 +145,15 @@ class Movement(object):
         self.move_arm([0, -1.18, 0.225, 0.035])
 
         print("Dumbbell is grabbed!")
-        self.grabbed = True
-        self.turn_towards_target(np.pi)
-
-        rospy.sleep(1)
-        while True:
-            drive_msg = Twist()
-            drive_msg.linear = Vector3(0.2, 0, 0)
-            self.movement_pub.publish(drive_msg)
+        rospy.sleep(2)
         
 
     def move_to_release(self):
         self.move_arm([0, -0.35, -0.15, 0.5])
         self.move_gripper([0.01, 0.01])
 
+        print("Dumbbell has been released!")
         rospy.sleep(2)
-        self.grabbed = False
         
         
     # turn the robot towards the given an angle, given in radians
@@ -136,9 +162,12 @@ class Movement(object):
 
         # convert angle to radian value in [-pi, pi]
         angle = math.remainder(angle , 2*np.pi)
+        
         destination_yaw = current_yaw + angle
         if destination_yaw > np.pi:
-            destination_yaw = -np.pi + (destination_yaw - np.pi)
+            destination_yaw -= (2 * np.pi)
+        elif destination_yaw < -np.pi:
+            destination_yaw += (2 * np.pi)
 
         r = rospy.Rate(60)
         # turn until we face within 1 degree of destination angle
@@ -149,6 +178,7 @@ class Movement(object):
             turn_msg.angular = Vector3(0, 0, turn_vel)
             self.movement_pub.publish(turn_msg)
             r.sleep()
+            print("{0}/{1}: {2}".format(str(get_yaw_from_pose(self.current_pose.pose.pose)), str(destination_yaw), str(abs(get_yaw_from_pose(self.current_pose.pose.pose) - destination_yaw))))
             
         # Halt
         self.movement_pub.publish(Twist())
@@ -181,8 +211,7 @@ class Movement(object):
 
         
     def run(self):
-        mvmt.move_to_ready()
-        
+        self.temp_callback()
         rospy.spin()
 
 # Some Code for debugging
@@ -195,6 +224,7 @@ if __name__=="__main__":
     obj_rec.run_digit_search()
     print("Finished Object Search; Printing Label Dict")
     print(obj_rec.block_label_dictionary)
+    mvmt.scan_complete = True
 
     # convert the (distance, angle) to [x, y, z] (where Z doesn't matter)
     for (key, value) in obj_rec.block_label_dictionary.items():

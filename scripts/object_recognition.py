@@ -23,7 +23,7 @@ def get_yaw_from_pose(p):
     return yaw
 
 # Turns robot around and searches for recognizable digits.
-class object_recognition(object):
+class ObjectRecognition(object):
 
     def __init__(self):
         self.initialized = False
@@ -216,16 +216,19 @@ class object_recognition(object):
         # add prediction to the label dictionary
 
         if max(blue_total, green_total, red_total) == 0:
-            return
+            return False
         elif max(blue_total, green_total, red_total) == blue_total:
             print("detected blue dumbbell!")
-            self.block_label_dictionary['b'] = self.block_polar_coordinates[block_coord_index]
+            self.block_label_dictionary["blue"] = self.block_polar_coordinates[block_coord_index]
+            return True
         elif max(blue_total, green_total, red_total) == green_total:
             print("detected green dumbbell!")
-            self.block_label_dictionary['g'] = self.block_polar_coordinates[block_coord_index]
+            self.block_label_dictionary["green"] = self.block_polar_coordinates[block_coord_index]
+            return True
         elif max(blue_total, green_total, red_total) == red_total:
             print("detected red dumbbell!")
-            self.block_label_dictionary['r'] = self.block_polar_coordinates[block_coord_index]
+            self.block_label_dictionary["red"] = self.block_polar_coordinates[block_coord_index]
+            return True
             
     # Executes the process of searching for the blocks, turning the robot to 
     # face them and performing digit detection
@@ -239,10 +242,11 @@ class object_recognition(object):
         for i in range(0, len(self.block_polar_coordinates)):
             # turn towards the target
             self.turn_towards_target(self.block_polar_coordinates[i][1] - get_yaw_from_pose(self.current_pose.pose.pose))
-            # search for digits within the screenshot
-            self.search_view_for_digits(i)
             # search for dumbbells within the screenshot
-            self.search_view_for_dumbbells(i)
+            if not self.search_view_for_dumbbells(i):
+                # search for digits within the screenshot
+                self.search_view_for_digits(i)
+            
             
     # should be called after run_digit_search
     # returns polar coordinates relative to the starting pose of the robot of the blocks
@@ -254,7 +258,7 @@ class object_recognition(object):
 if __name__=="__main__":
 
     print("Initializing Object Recognition")
-    obj_rec = object_recognition()
+    obj_rec = ObjectRecognition()
     print("Done Initializing, Running object search")
     obj_rec.run_digit_search()
     print("Finished Object Search; Printing Label Dict")
