@@ -140,9 +140,8 @@ class Movement(object):
             if Mgreen['m00'] > 0:
                 cx = int(Mgreen['m10']/Mgreen['m00'])
                 cy = int(Mgreen['m01']/Mgreen['m00'])
-                # a red circle is visualized in the debugging window to indicate
-                # the center point of the green pixels.
-                cv2.circle(img, (cx, cy), 20, (0,0,255), -1)
+                # circle for debugging window
+                #cv2.circle(img, (cx, cy), 20, (0,0,255), -1)
                 self.color_turn_dict["green"] = (w/2 - cx)
             else:
                 self.color_turn_dict["green"] = 0
@@ -162,23 +161,37 @@ class Movement(object):
                 self.color_turn_dict["blue"] = (w/2 - cx)
             else:
                 self.color_turn_dict["blue"] = 0
+            
             # show the debugging window
-            cv2.imshow("window", img)
-            cv2.waitKey(3)
+            #cv2.imshow("window", img)
+            #cv2.waitKey(3)
 
 
     
     def action_callback(self, data):
         dumbbell = data.robot_db
         block = data.block_id
-
-        # current_yaw = get_yaw_from_pose(self.current_pose.pose.pose)
-        # current_x = get_yaw_from_pose(self.current_pose.pose.pose)
+        
+        self.orient_towards_target(dumbbell)
+        self.move_to_ready()
+        self.driving = True
+        self.target_driving_towards = dumbbell
+        while self.driving:
+            pass
+    
+        self.move_to_grabbed()
+        self.orient_towards_target(block)
+        self.on_way_to_block = True
+        self.driving = True
+        while self.driving:
+            pass
+        self.on_way_to_block = False
+        
+        self.move_to_release()
 
 
     def temp_callback(self):
         actions = [("green", "1"), ("red", "3"), ("blue", "2")]
-
 
         for (dumbbell, block) in actions:
             self.orient_towards_target(dumbbell)

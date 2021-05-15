@@ -1,1 +1,8 @@
-<!-- TODO -->
+<launch>
+    <node pkg="q_learning_project" type="virtual_reset_world.py" name="vr"/>
+
+    <node pkg="q_learning_project" type="q_learning.py" name="training">
+        <param name="train" type="str" value="true" />
+    </node>
+
+</launch>

@@ -191,6 +191,12 @@ class QLearning(object):
 
 if __name__ == "__main__":
     node = QLearning()
-    node.train_q_matrix()
-    node.save_q_matrix()
-    print("QMatrix Converged and Saved to q_matrix.csv")
+    try:
+        if rospy.get_param('~train'):
+            node.train_q_matrix()
+            node.save_q_matrix()
+            print("QMatrix Converged and Saved to q_matrix.csv")
+        else:
+            node.execute_according_to_q_matrix()
+    except:
+        print("No such paramters")
