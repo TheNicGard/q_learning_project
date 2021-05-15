@@ -1,10 +1,8 @@
 <launch>
 
-    <include file="$(find q_learing_project)/launch/empty_world.launch"/>
+    <include file="$(find turtlebot3_manipulation_moveit_config)/launch/move_group.launch"/>
 
-    <include file="$find turtlebot3_manipulation_moveit_config/launch/move_group.launch"/>
-
-    <node pkg="q_learning_project" type="q_learning.py" name="training">
+    <node pkg="q_learning_project" type="q_learning.py" name="action_pub">
         <param name="train" type="str" value="true" />
     </node>
 

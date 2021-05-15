@@ -4,6 +4,7 @@ import rospy
 import numpy as np
 import os
 import csv, time, copy
+from gazebo_msgs.msg import ModelStates
 from q_learning_project.msg import QMatrixRow, QMatrix, QLearningReward, RobotMoveDBToBlock
 
 # Path of directory on where this file is located
@@ -56,6 +57,7 @@ class QLearning(object):
         self.q_matrix_pub= rospy.Publisher("/q_learning/q_matrix", QMatrix, queue_size=10)
         self.action_pub = rospy.Publisher("/q_learning/robot_action", RobotMoveDBToBlock, queue_size=10)
         self.reward_sub = rospy.Subscriber("/q_learning/reward", QLearningReward, self.reward_call_back)
+        self.model_state_sub = rospy.Publisher("/gazebo/set_model_states", ModelStates, self.model_state_callback)
         # wait for publishers and subscribers to initialize
         time.sleep(1)
 
@@ -89,6 +91,7 @@ class QLearning(object):
             self.load_q_matrix()
         if self.q_matrix is not None:
             current_state_num = 0
+            self.state_update = False
             while not rospy.is_shutdown():
                 # get allowed actions
                 allowed_actions = []
@@ -107,13 +110,17 @@ class QLearning(object):
                             best_action = action_num
                             next_state_num = next_state
                     action_dict = self.actions[best_action]
-                    self.action_pub.publish(RobotMoveDBToBlock(action_dict['dumbbell'], action_dict['block']))
+                    print(action_dict)
+                    action_msg = RobotMoveDBToBlock()
+                    action_msg.robot_db = action_dict['dumbbell']
+                    action_msg.block_id = action_dict['block']
+                    self.action_pub.publish(action_msg)
                     current_state_num = next_state_num
-                    # wait until we get reward to publish proceed
-                    while self.reward_update == 0:
+                    # wait until state changes to move to next action
+                    while self.state_update == False:
                         time.sleep(1)
-                    # reset check for reward callback
-                    self.reward_update = 0
+                    # reset check for state callback
+                    self.state_update = False
                 else:
                     # if no allowed actions, wait for reset
                     current_state_num = 0
@@ -121,10 +128,30 @@ class QLearning(object):
             raise Exception("'execute_according_to_q_matrix' could not find q_matrix")
 
 
+    def model_state_callback(self, data):
+        # get the initial locations of the three numbered blocks
+        if (self.current_numbered_blocks_locations == None):
+            self.current_numbered_blocks_locations = {}
+            for block_id in self.numbered_block_model_names:
+                block_idx = data.name.index(self.numbered_block_model_names[block_id])
+                self.current_numbered_blocks_locations[block_id] = data.pose[block_idx].position
+
+        db_block_mapping = {}
+        for robot_db in self.robot_dbs:
+            db_idx = data.name.index(self.db_model_names[robot_db])
+            db_block_mapping[robot_db] = self.is_in_front_of_any_block(data.pose[db_idx])
+
+        # if a dumbbell has moved in front of a numbered block, set self.state_update=true
+        for robot_db in self.robot_dbs:
+            if (self.current_robot_db_locations[robot_db] != db_block_mapping[robot_db]):
+                self.state_update = True
+        
+        
+
+
     def reward_call_back(self, data):
         self.reward = data.reward
         self.reward_update = 1
-        pass
 
 
     # run the algorithm to train the q_matrix
@@ -135,6 +162,7 @@ class QLearning(object):
 
         current_state_num = 0
         self.reward_update = 0
+        self.state_update = 0
         q_matrix_difference = 100
         iteration = 0
         while q_matrix_difference > 10:
@@ -150,7 +178,10 @@ class QLearning(object):
                 action_state_pair = allowed_actions[int(np.random.randint(0, len(allowed_actions)))]
                 chosen_action_num = int(action_state_pair[0])
                 action_dict = self.actions[chosen_action_num]
-                self.action_pub.publish(RobotMoveDBToBlock(action_dict['dumbbell'], action_dict['block']))
+                action_msg = RobotMoveDBToBlock()
+                action_msg.robot_db = action_dict['dumbbell']
+                action_msg.block_id = action_dict['block']
+                self.action_pub.publish(action_msg)
                 # wait until we get reward and update accordingly
                 while self.reward_update == 0:
                     time.sleep(1)
@@ -197,6 +228,7 @@ if __name__ == "__main__":
             node.save_q_matrix()
             print("QMatrix Converged and Saved to q_matrix.csv")
         else:
-            node.execute_according_to_q_matrix()
+            node.execute_according_to_q_matrix("csv")
     except:
         print("No such paramters")
+        node.execute_according_to_q_matrix("csv")

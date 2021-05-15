@@ -81,6 +81,8 @@ class Movement(object):
         
         self.driving_angular_velocity = 0
 
+        self.action_queue = []
+
         self.initialized = True
 
     def odom_callback(self, data):
@@ -166,12 +168,10 @@ class Movement(object):
             #cv2.imshow("window", img)
             #cv2.waitKey(3)
 
-
-    
-    def action_callback(self, data):
-        dumbbell = data.robot_db
-        block = data.block_id
-        
+    # moves the given action to the block    
+    def execute_action(self, action):
+        dumbbell = action[0]
+        block = action[1]
         self.orient_towards_target(dumbbell)
         self.move_to_ready()
         self.driving = True
@@ -188,6 +188,10 @@ class Movement(object):
         self.on_way_to_block = False
         
         self.move_to_release()
+        
+    
+    def action_callback(self, data):
+        self.action_queue.append((data.robot_db, data.block_id))
 
 
     def temp_callback(self):
@@ -301,8 +305,16 @@ class Movement(object):
 
         
     def run(self):
-        self.temp_callback()
+        #self.temp_callback()
+        queued_action_index = 0
         rospy.spin()
+        while not rospy.is_shutdown:
+            try:
+                self.execute_action(self.action_queue[queued_action_index])
+                queued_action_index += 1
+            except:
+                print("ran out of actions in queue")
+            queued_action_index += 1
 
 # Some Code for debugging
 if __name__=="__main__":
@@ -329,4 +341,3 @@ if __name__=="__main__":
     print(a)
 
     mvmt.run()
-    rospy.spin()
