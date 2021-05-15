@@ -2,10 +2,10 @@
 
     <include file="$(find turtlebot3_manipulation_moveit_config)/launch/move_group.launch"/>
 
+    <node pkg="q_learning_project" type="movement.py" name="mvmt"/>
+    
     <node pkg="q_learning_project" type="q_learning.py" name="action_pub">
         <param name="train" type="str" value="true" />
     </node>
-
-    <node pkg="q_learning_project" type="movement.py" name="mvmt"/>
 
 </launch>

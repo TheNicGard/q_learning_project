@@ -57,7 +57,7 @@ class QLearning(object):
         self.q_matrix_pub= rospy.Publisher("/q_learning/q_matrix", QMatrix, queue_size=10)
         self.action_pub = rospy.Publisher("/q_learning/robot_action", RobotMoveDBToBlock, queue_size=10)
         self.reward_sub = rospy.Subscriber("/q_learning/reward", QLearningReward, self.reward_call_back)
-        self.model_state_sub = rospy.Publisher("/gazebo/set_model_states", ModelStates, self.model_state_callback)
+        self.model_state_sub = rospy.Subscriber("/gazebo/set_model_states", ModelStates, self.model_state_callback)
         # wait for publishers and subscribers to initialize
         time.sleep(1)
 
@@ -110,7 +110,6 @@ class QLearning(object):
                             best_action = action_num
                             next_state_num = next_state
                     action_dict = self.actions[best_action]
-                    print(action_dict)
                     action_msg = RobotMoveDBToBlock()
                     action_msg.robot_db = action_dict['dumbbell']
                     action_msg.block_id = action_dict['block']
