@@ -6,6 +6,7 @@ import os
 import csv, time, copy
 from gazebo_msgs.msg import ModelStates
 from q_learning_project.msg import QMatrixRow, QMatrix, QLearningReward, RobotMoveDBToBlock
+from std_msgs.msg import Bool
 
 # Path of directory on where this file is located
 path_prefix = os.path.dirname(__file__) + "/action_states/"
@@ -58,6 +59,7 @@ class QLearning(object):
         self.action_pub = rospy.Publisher("/q_learning/robot_action", RobotMoveDBToBlock, queue_size=10)
         self.reward_sub = rospy.Subscriber("/q_learning/reward", QLearningReward, self.reward_call_back)
         self.model_state_sub = rospy.Subscriber("/gazebo/set_model_states", ModelStates, self.model_state_callback)
+        
         # wait for publishers and subscribers to initialize
         time.sleep(1)
 
@@ -217,10 +219,9 @@ class QLearning(object):
             else: # no actions left
                 current_state_num = 0
 
-
-
 if __name__ == "__main__":
     node = QLearning()
+    
     try:
         if rospy.get_param('~train'):
             node.train_q_matrix()

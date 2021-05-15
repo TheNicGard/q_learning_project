@@ -9,8 +9,11 @@ import rospy, cv2, cv_bridge
 
 from geometry_msgs.msg import Point, Pose, Twist, Vector3
 from nav_msgs.msg import Odometry
+from q_learning_project.msg import RobotMoveDBToBlock
 from sensor_msgs.msg import Image, LaserScan
+from std_msgs.msg import Bool, String, Float64
 from tf.transformations import quaternion_from_euler, euler_from_quaternion
+
 
 """
 A helper function that takes in a Pose object (geometry_msgs) and returns yaw
@@ -27,16 +30,25 @@ def get_yaw_from_pose(p):
 
 class Movement(object):
     def __init__(self):
-        # rospy.init_node('movement')
+        rospy.init_node('movement')
         # seems to have a problem with also initializing object_recognition?
         self.initialized = False
         self.target_driving_towards = None
         self.movement_pub = rospy.Publisher('/cmd_vel', Twist, queue_size=10)
         self.lidar_sub = rospy.Subscriber("/scan", LaserScan, self.get_scan)
         self.odom_sub = rospy.Subscriber('/odom', Odometry, self.odom_callback)
-        self.action_sub = rospy.Subscriber('/q_learning/robot_action', Odometry, self.action_callback)
+        self.action_sub = rospy.Subscriber('/q_learning/robot_action', RobotMoveDBToBlock, self.action_callback)
         self.image_sub = rospy.Subscriber('camera/rgb/image_raw', Image, self.image_callback)
+        
+        self.obj_rec_key_sub = rospy.Subscriber('obj_rec_key', String, self.add_obj_rec_key)
+        self.obj_rec_dis_sub = rospy.Subscriber('obj_rec_dis', Float64, self.add_obj_rec_dis)
+        self.obj_rec_ang_sub = rospy.Subscriber('obj_rec_ang', Float64, self.add_obj_rec_ang)
+        self.debug_pub = rospy.Publisher('chatter', String, queue_size = 10)
 
+        self.scan_complete = False
+        self.driving = False
+        self.on_way_to_block = False
+        
         # set up ROS / cv bridge
         self.bridge = cv_bridge.CvBridge()
 
@@ -64,10 +76,6 @@ class Movement(object):
         # openmanipulator gripper
         self.move_group_gripper = moveit_commander.MoveGroupCommander("gripper")
 
-        self.scan_complete = False
-        self.driving = False
-        self.on_way_to_block = False
-
         self.ranges = []
 
         # the farthest and closest distance a robot can be to pick up an object
@@ -83,6 +91,11 @@ class Movement(object):
 
         self.action_queue = []
 
+        self.block_label_dict = {}
+        self.temp_key = None
+        self.temp_dis = None
+        self.temp_ang = None
+
         self.initialized = True
 
     def odom_callback(self, data):
@@ -90,6 +103,9 @@ class Movement(object):
             self.current_pose = data
         
     def get_scan(self, data):
+        if not self.initialized:
+            return
+        
         # get the 5 degrees directly in front of the robot
         front_scans = data.ranges[0:3] + data.ranges[358:360]
         front_avg = sum(front_scans) / len(front_scans)
@@ -191,7 +207,9 @@ class Movement(object):
         
     
     def action_callback(self, data):
+        self.debug_pub.publish(String("Appending action to queue"))
         self.action_queue.append((data.robot_db, data.block_id))
+        self.debug_pub.publish(String("Queue: {0}".format(str(self.action_queue))))
 
 
     def temp_callback(self):
@@ -305,30 +323,54 @@ class Movement(object):
 
         
     def run(self):
-        #self.temp_callback()
+        self.debug_pub.publish(String("Run has just start!"))
         queued_action_index = 0
-        rospy.spin()
-        while not rospy.is_shutdown:
+
+        while not rospy.is_shutdown():
+            self.debug_pub.publish(String("while loop action_index: {0}".format(str(queued_action_index))))
             try:
+                self.debug_pub.publish(String("Trying to execute action..."))
                 self.execute_action(self.action_queue[queued_action_index])
                 queued_action_index += 1
-            except:
-                print("ran out of actions in queue")
-            queued_action_index += 1
+            except Exception as e:
+                self.debug_pub.publish(String("Exception: {0}".format(str(e))))
+                rospy.sleep(1)
+            # queued_action_index += 1
+        rospy.spin()
+
+    def add_obj_rec_key(self, data):
+        while self.temp_key != None:
+            rospy.sleep(1)
+        self.temp_key = str(data)
+        
+    def add_obj_rec_dis(self, data):
+        while self.temp_dis != None:
+            rospy.sleep(1)
+        self.temp_dis = data
+        
+    def add_obj_rec_ang(self, data):
+        while self.temp_ang != None:
+            rospy.sleep(1)
+        self.temp_ang = data
 
 # Some Code for debugging
 if __name__=="__main__":
     mvmt = Movement()
-    print("Initializing Object Recognition")
-    obj_rec = object_recognition.ObjectRecognition()
-    print("Done Initializing, Running object search")
-    obj_rec.run_digit_search()
-    print("Finished Object Search; Printing Label Dict")
-    print(obj_rec.block_label_dictionary)
-    mvmt.scan_complete = True
 
+    while len(mvmt.block_label_dict) < 6:
+        if mvmt.temp_key != None and mvmt.temp_dis != None and mvmt.temp_ang != None:
+            ke, di, angle = mvmt.temp_key, mvmt.temp_dis, mvmt.temp_ang
+            mvmt.temp_key, mvmt.temp_dis, mvmt.temp_ang = None, None, None
+            mvmt.block_label_dict[ke] = (di, angle)
+            mvmt.debug_pub.publish(String("Object #{0} has just been added!".format(str(len(mvmt.block_label_dict)))))
+        else:
+            rospy.sleep(1)
+                                   
+    
+    mvmt.scan_complete = True
+    
     # convert the (distance, angle) to [x, y, z] (where Z doesn't matter)
-    for (key, value) in obj_rec.block_label_dictionary.items():
+    for (key, value) in mvmt.block_label_dictionary.items():
         distance, angle = value[0], value[1]
         x = distance * np.cos(angle)
         y = distance * np.sin(angle)
@@ -337,7 +379,5 @@ if __name__=="__main__":
     for (key, value) in mvmt.object_positions.items():
         print("{0}:\n{1}".format(key, str(value)))
 
-    a = "{:.2f}, {:.2f}, {:.2f}".format(mvmt.current_pose.pose.pose.position.x, mvmt.current_pose.pose.pose.position.y, get_yaw_from_pose(mvmt.current_pose.pose.pose))
-    print(a)
 
     mvmt.run()

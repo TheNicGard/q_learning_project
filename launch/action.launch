@@ -1,11 +1,12 @@
 <launch>
-
     <include file="$(find turtlebot3_manipulation_moveit_config)/launch/move_group.launch"/>
 
-    <node pkg="q_learning_project" type="movement.py" name="mvmt"/>
-    
-    <node pkg="q_learning_project" type="q_learning.py" name="action_pub">
-        <param name="train" type="str" value="true" />
-    </node>
+    <param name="train" type="str" value="false" />
+    <param name="requires_mvmt" type="str" value="true" />
 
+    <node pkg="q_learning_project" type="object_recognition.py" name="object_recognition"/>
+    <node pkg="q_learning_project" type="movement.py" name="mvmt"/>
+    <node pkg="q_learning_project" type="q_learning.py" name="action_pub">
+            
+    </node>
 </launch>

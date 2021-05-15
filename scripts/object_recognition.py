@@ -9,6 +9,7 @@ from tf.transformations import quaternion_from_euler, euler_from_quaternion
 from geometry_msgs.msg import Vector3, Twist
 from nav_msgs.msg import Odometry
 from sensor_msgs.msg import LaserScan, Image
+from std_msgs.msg import String, Float64
 
 def get_yaw_from_pose(p):
     """ A helper function that takes in a Pose object (geometry_msgs) and returns yaw"""
@@ -28,7 +29,7 @@ class ObjectRecognition(object):
     def __init__(self):
         self.initialized = False
 
-        rospy.init_node('digit_recognizer')
+        rospy.init_node('object_recognition')
         
         # set up ROS / cv bridge
         self.bridge = cv_bridge.CvBridge()
@@ -40,6 +41,14 @@ class ObjectRecognition(object):
         self.odom_sub = rospy.Subscriber('/odom', Odometry, self.odom_callback)
         self.lidar_sub = rospy.Subscriber('/scan', LaserScan, self.scan_callback)
         self.image_sub = rospy.Subscriber('camera/rgb/image_raw', Image, self.image_callback)
+
+        # publishes object coordinates to Movement
+        # this is so inefficient, i'm so sorry
+        self.obj_rec_key_pub = rospy.Publisher('obj_rec_key', String, queue_size = 10)
+        self.obj_rec_dis_pub = rospy.Publisher('obj_rec_dis', Float64, queue_size = 10)
+        self.obj_rec_ang_pub = rospy.Publisher('obj_rec_ang', Float64, queue_size = 10)
+
+        self.debug_pub = rospy.Publisher('chatter', String, queue_size = 10)
         
         # list of the blocks positions as polar coordinate tuples (radius, angle) where the angle is in radians
         self.block_polar_coordinates = []
@@ -252,15 +261,22 @@ class ObjectRecognition(object):
     # returns polar coordinates relative to the starting pose of the robot of the blocks
     def get_block_position(self, block_num:int):
         return self.block_label_dictionary[block_num]
-        
 
 # Some Code for debugging
 if __name__=="__main__":
-
     print("Initializing Object Recognition")
     obj_rec = ObjectRecognition()
     print("Done Initializing, Running object search")
     obj_rec.run_digit_search()
     print("Finished Object Search; Printing Label Dict")
-    obj_rec.block_label_dictionary = OrderedDict(sorted(obj_rec.block_label_dictionary.items()))
     print(obj_rec.block_label_dictionary)
+
+    for i in obj_rec.block_label_dictionary.keys():
+        obj_rec.debug_pub.publish(String("Key {0} has just been added!".format(i)))
+    
+    for (key, value) in obj_rec.block_label_dictionary.items():
+        
+        obj_rec.obj_rec_key_pub.publish(String(key))
+        obj_rec.obj_rec_dis_pub.publish(Float64(value[0]))
+        obj_rec.obj_rec_ang_pub.publish(Float64(value[1]))
+
