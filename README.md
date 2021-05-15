@@ -1,5 +1,56 @@
-# q_learning_project
+# Q-Learning Project
 **Team Members: Carlos Azpurua, Nic Gard**
+
+## **Q-Learning Writeup**
+### Objectives Description
+
+The goal of this project is to implement a reinforcement learning algorithm to train a robot to position particular objects in places that are desirable. In particular, the robot needs to be able to perceive its surroundings, and move accordingly to pick up the appropriate objects and move them to the desired positions according to the algorithm. This gave us experience working with the robots RGB-camera, pretrained image recognition ML models, the robots arm, and the Q-learning algorithm (the particular algorithm we are using).
+
+### High-level Description
+
+We abstracted the robot's movements into a finite number of “actions”, each of which is a movement of a dumbbell to a particular spot. Whenever a dumbbell is moved, a positive reward is given if the dumbbells are all in the correct positions, and a reward of 0 is given otherwise. This allowed us to train a Q-matrix according to the Q-learning reinforcement algorithm by moving the dumbbells around randomly through the actions (virtually), and updating the matrix according to the reward we received. The robot itself can then follow the Q-matrix by picking the action from its current state that yields the best Q-Value, and execute the actions using its perception (Lidar and RGB camera) and programmed movement.
+
+### Q-learning Algorithm Description
++ **Selecting and executing actions for the robot (or phantom robot) to take:** The `train_q_matrix` in `QLearning` selects a random action from the set of valid actions from the current state, and then publishes the action for another node which then actually executes it, or simulates executing it. The function `execute_according_to_q_matrix` in `QLearning` uses a trained Q-matrix to select an action (and then publish it for execution via the driver node/class). We choose the action from Q-matrix for the current state with the highest Q-value
++ **Updating the Q-matrix:** This is done in `train_q_matrix`, once an action is published as above, we wait for it to be performed by waiting for a node to publish to the rewards topic. Then, we use the reward to update the q_matrix according to the algorithm given in the writeup.
++ **Determining when to stop iterating through the Q-learning algorithm:** If *n* is the size of the Q-matrix, then every *n* actions during the learning process, we check if the sum of the absolute value of the differences between the entries of the current Q-matrix, and the Q-matrix from *n* actions ago, is above a certain threshold. In our case we used a threshold of 10. This occurs in the main while loop of `train_q_matrix`
++ **Executing the path most likely to lead to receiving a reward after the Q-matrix has converged on the simulated Turtlebot3 robot:** As described in the answer to the first question, we publish the action which has the highest Q-value according to the row in the Q-matrix corresponding to the world's current state. This action is executed by the driver node.
+
+### Robot Perception Description
++ **Identifying the locations and identities of each of the colored dumbbells:** Before moving the robot at all, we search for distinct objects with the robot's Lidar, and then rotate the robot to capture RGB-images of each of these objects while directly facing them. Taking these images, a color mask is applied to them so that only objects that have colors like the dumbbells are visible (i.e. blue, green, and red color masks were used). In a vertical portion of the image, 25% of the total image width, the number of pixels that fall into a blue, green, and red color threshold are counted. The highest sum of pixels of a specific color is used to determine the dumbbell directly in front of the robot, e.g. if there are more blue pixels than green or red pixels in the center 25% of the image, we determine that the robot is facing the blue dumbbell. The polar coordinates of the dumbbells relative to the robot’s starting position is saved.
+  
+  All of the code used for processing images of dumbbells is contained in `search_view_for_dumbbells`, in the `ObjectRecognition` class. The code used for color detection was based on code from [this post](https://www.pyimagesearch.com/2014/08/04/opencv-python-color-detection/).
++ **Identifying the locations and identities of each of the numbered blocks:** Before moving the robot at all, we search for distinct objects with the robot's Lidar, and then rotate the robot to capture RGB-images of each of these objects while directly facing them. We pass these RGB-images to keras_ocr, and we identify the objects by the character whose box is closest to the center of the camera, or ignore them if no characters are detected. The lidar readings give us the distance and angle to those objects, so we have the polar coordinates of the blocks relative to the robot's starting position.
+  
+  In the `ObjectRecognition` class, the code for processing images of digits is contained in the `search_view_for_digits` function.
+
+### Robot Manipulation and Movement Description
++ **Moving to the right spot in order to pick up a dumbbell:** The polar coordinates saved during the initial scan are converted into cartesian coordinates relative to the robot’s starting position. The robot’s odometry is used to navigate to the correct dumbbell, i.e. the robot turns in an arc between where the dumbbell is and where the robot is facing, and drives directly towards the dumbbell. Once the robot is driving, it uses the RGB camera to adjust its angle of approach by making sure the color of the given dumbbell is centered, and stops once it is within a certain distance of the dumbbell best suited for grabbing it, determined by an upper and lower proximity distance.
+
+  All movement for robot manipulation after the initial scan is done in the `Movement` class. Turning towards a specific dumbbell is performed in the `orient_towards_target` function, which calls `turn_towards_target` to turn towards a numbered block. Driving towards the dumbbell is executed in the lidar callback function `get_scan`, and angle adjustments are made here based on class variables `self.color_turn_dict` and `self.target_driving_towards`, which come from the `image_callback` function.
++ **Picking up the dumbbell:** Before the robot moves into position, the arm and gripper are moved in front of the robot, so that when the robot drives near the dumbbell, the dumbbell will be between the gripper. One the robot is in front of the dumbbell, it is grabbed by the arm and gripper and lifted above the robot.
+
+  Within the `Movement` class, the arm and gripper are moved via `move_arm` and `move_gripper` respectively. `move_to_ready` moves the arm to a position that can pick up the dumbbell, and `move_to_grabbed` closes the gripper around the dumbbell and lifts it above the robot.
++ **Moving to the desired destination (numbered block) with the dumbbell:** Similarly to the dumbbells, the cartesian coordinates of the block relative to the robot’s starting position are used to navigate to the correct block. The proximity distance used for driving towards the blocks is greater, so that the dumbbell can be dropped in front of the block without bumping into it.
+
+  All movement for robot manipulation after the initial scan is done in the `Movement` class. Turning towards a specific dumbbell is performed in the `orient_towards_target` function, which calls `turn_towards_target` to turn towards a numbered block. Driving towards the dumbbell is executed in the lidar callback function `get_scan`.
++ **Putting the dumbbell back down at the desired destination:** Once the robot is a specific distance away from the block (determined by the proximity bounds), the robot drops the dumbbell directly in front of itself, which should be near the face of the block.
+
+  Within the `Movement` class, the `move_to_release` moves the arm to a position that can drop the dumbbell in front of the robot, and opens the grabber.
+
+### Challenges
+
+Movement was initially inaccurate: the robot would not always approach the dumbbell at the right angle. We realized we could use the robot's RBG camera to nudge the robot in the right direction to better face the dumbbell, and this was a huge improvement in the accuracy of our ability to move to and pick up the dumbbells. Getting the robot to successfully grab the arm at first also proved to be difficult, because both the gripper and the handle of the dumbbells are quite small, so the margin for error was small. After a lot of trial and error, we managed to find the right position the robot and arm needed to be in to correctly grab the dumbbell, and the right position of the arm for the robot to be able to carry the dumbbell without dropping it.
+
+### Future Work
+
+We would want to add functionality to load and train with an existing q_matrix, which could help us test different conditions for convergence. Moreover, we would like to check the moving average of the difference between the q_matrixes current values and its values some time ago, as a better way of checking for convergence, as our current condition went on for over 3000 iterations, and didn’t end up detecting convergence until this difference was 0. Additionally, in a few places in the code, the robot assumes that it starts moving from the origin, so it locates all objects relative to the origin of the map. A more robust solution would locate the objects from the robot’s true starting position, whether that was the origin or not.
+
+### Takeaways
+
++ **Take advantage of Modularity:** For this project, it worked well to divide up the work, as opposed to working together on the same thing, as it was largely modular and came together well. However, it was also good to collaborate to troubleshoot issues that arose in each other’s work.
++ **Leave enough time for fine-tuning/tweaking:** When working on robot movement, we started by getting the robot to be functional, and left worrying about getting it to be accurate for later. However, a robot that doesn’t work correctly doesn’t really work at all, so getting a robot to be functional and able to go through the physical motions is just as important as getting it to perform its task successfully. The same could be said for optimizing other tasks, such as tweaking parameters for computer vision or regression learning.
+
 ## Implementation Plan:
 **Q-Learning Algorithm**
 + *Executing the Q-learning algorithm*: The Q-learning algorithm can be implemented largely like how it was implemented in class with the 5 Room Building example, except using map coordinates instead of room numbers, and the actions of picking up/dropping the dumbbell are included in potential actions. Testing this may lead to a better solution, as whether or not this approach works with a robot on a larger state space may prove impractical.
